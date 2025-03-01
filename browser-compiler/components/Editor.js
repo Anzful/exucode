@@ -1,93 +1,70 @@
 import { useState, useRef, useEffect } from 'react';
-import { EditorState } from '@codemirror/state';
-import { EditorView, basicSetup } from 'codemirror';
-import { javascript } from '@codemirror/lang-javascript';
-import { python } from '@codemirror/lang-python';
-import { cpp } from '@codemirror/lang-cpp';
-import { java } from '@codemirror/lang-java';
-import axios from 'axios';
+import Editor from '@monaco-editor/react';
 
-// Default code snippets for each language
-const defaultCodes = {
-  javascript: 'console.log("Hello, World!");',
-  python: 'print("Hello, World!")',
-  cpp: '#include <iostream>\n\nint main() {\n    std::cout << "Hello, World!" << std::endl;\n    return 0;\n}',
-  java: 'public class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, World!");\n    }\n}',
+// Map of language identifiers for Monaco Editor
+const languageMap = {
+  javascript: 'javascript',
+  python: 'python',
+  cpp: 'cpp',
+  java: 'java',
 };
 
-const Editor = () => {
-  // State variables
+const EditorComponent = () => {
   const [language, setLanguage] = useState('javascript');
-  const [code, setCode] = useState(defaultCodes.javascript);
+  const [code, setCode] = useState('');
   const [output, setOutput] = useState('');
-  const [isRunning, setIsRunning] = useState(false);
+  const [worker, setWorker] = useState(null);
   const editorRef = useRef(null);
 
-  // Language extensions for CodeMirror
-  const languageExtensions = {
-    javascript: javascript(),
-    python: python(),
-    cpp: cpp(),
-    java: java(),
-  };
-
-  // Reset code to default when language changes
+  // Initialize the worker only on the client side
   useEffect(() => {
-    setCode(defaultCodes[language]);
-  }, [language]);
+    // Ensure this runs only in the browser
+    if (typeof window !== 'undefined') {
+      const newWorker = new Worker('/worker.js');
+      setWorker(newWorker);
 
-  // Initialize CodeMirror editor
-  useEffect(() => {
-    if (editorRef.current) {
-      const state = EditorState.create({
-        doc: code,
-        extensions: [
-          basicSetup, // Includes line numbers and syntax highlighting
-          languageExtensions[language],
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
-              setCode(update.state.doc.toString());
-            }
-          }),
-        ],
-      });
+      // Handle messages from the worker
+      newWorker.onmessage = (event) => {
+        if (event.data.error) {
+          setOutput(`Error: ${event.data.error}`);
+        } else {
+          setOutput(event.data.output);
+        }
+      };
 
-      const view = new EditorView({
-        state,
-        parent: editorRef.current,
-      });
-
-      // Cleanup on unmount or language change
-      return () => view.destroy();
+      // Cleanup the worker when the component unmounts
+      return () => {
+        newWorker.terminate();
+      };
     }
-  }, [language]);
+  }, []);
 
-  // Handle language selection
-  const handleLanguageChange = (e) => {
-    setLanguage(e.target.value);
+  // Update code state when editor content changes
+  const handleEditorChange = (value) => {
+    setCode(value);
   };
 
-  // Handle code execution
-  const handleRun = async () => {
-    setIsRunning(true);
-    setOutput('Running...');
-    try {
-      const response = await axios.post('/api/execute', { language, code });
-      setOutput(response.data.output);
-    } catch (error) {
-      setOutput('Error: ' + error.message);
-    } finally {
-      setIsRunning(false);
+  // Handle "Run" button click
+  const handleRun = () => {
+    if (language === 'javascript') {
+      if (worker) {
+        setOutput('Running...');
+        worker.postMessage(code);
+      } else {
+        setOutput('Worker not initialized yet');
+      }
+    } else {
+      setOutput('Execution only supported for JavaScript');
     }
   };
 
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-white">
-      {/* Header with language dropdown and Run button */}
+      {/* Header with language selection and Run button */}
       <div className="flex justify-between p-4">
         <select
           value={language}
-          onChange={handleLanguageChange}
+          onChange={(e) => setLanguage(e.target.value)}
           className="bg-gray-800 p-2 rounded"
         >
           <option value="javascript">JavaScript</option>
@@ -97,17 +74,22 @@ const Editor = () => {
         </select>
         <button
           onClick={handleRun}
-          className={`bg-blue-500 p-2 rounded ${isRunning ? 'opacity-50 cursor-not-allowed' : ''}`}
-          disabled={isRunning}
+          className="bg-blue-500 p-2 rounded hover:bg-blue-600"
         >
-          {isRunning ? 'Running...' : 'Run'}
+          Run
         </button>
       </div>
-      {/* Split-screen layout */}
+      {/* Split-screen layout for editor and output */}
       <div className="flex flex-1">
-        {/* Code Editor */}
+        {/* Monaco Editor */}
         <div className="w-1/2 p-4 border-r border-gray-700">
-          <div ref={editorRef} className="h-full" />
+          <Editor
+            height="100%"
+            language={languageMap[language]}
+            value={code}
+            onChange={handleEditorChange}
+            theme="vs-dark"
+          />
         </div>
         {/* Output Console */}
         <div className="w-1/2 p-4 bg-gray-800 overflow-auto">
@@ -118,4 +100,4 @@ const Editor = () => {
   );
 };
 
-export default Editor;
+export default EditorComponent;
